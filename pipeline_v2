@@ -1,0 +1,136 @@
+//####Version: 2.0 (ejecución en Azure)####
+
+pipeline {
+    agent any
+
+    triggers {
+        githubPush()
+    }
+
+    environment {
+        DUMMY_REPO  = ''
+        AZURE_URL = ''
+        TOKEN = ''
+        AZURE_FUNCTION_URL = ''
+    }
+
+    stages {
+        stage('Limpiar resultados anteriores') {
+            steps {
+                script {
+                    sh '''
+                        echo " Eliminando archivos resultado*.json antiguos..."
+                        rm -f resultado*.json || true
+                    '''
+                }
+            }
+        }
+
+        stage('Inicializar variables dinámicas') {
+            steps {
+                script {
+                    def nombreJob = env.JOB_NAME.tokenize('/')[-1]
+                    env.ALUMNO = nombreJob.replaceFirst('-job\\d+$', '')
+
+                    def carpetas = env.JOB_NAME.tokenize('/')
+                    env.PRACTICA = carpetas.size() > 1 ? carpetas[-2] : 'practica1'
+
+                    env.ZIP_NAME = "${env.ALUMNO}_${env.PRACTICA}_ejercicios.zip"
+
+                    echo "📁 Práctica: ${env.PRACTICA}"
+                    echo "👤 Alumno: ${env.ALUMNO}"
+                    echo "📦 Archivo: ${env.ZIP_NAME}"
+                }
+            }
+        }
+
+        stage('Clonar repositorio') {
+            steps {
+                git branch: 'main', url: "${DUMMY_REPO}"
+            }
+        }
+
+        stage('Comprimir práctica') {
+            steps {
+                script {
+                    sh "rm -f ${ZIP_NAME}"
+                    sh "zip -r ${ZIP_NAME} ${PRACTICA}"
+                }
+            }
+        }
+
+        stage('Subir a Azure Blob') {
+            steps {
+                script {
+                    def blob_url = "${AZURE_URL}/${ZIP_NAME}${TOKEN}"
+                    echo "Subiendo a Blob: ${blob_url}"
+
+                    sh """
+                        azcopy copy '${ZIP_NAME}' '${blob_url}' --overwrite=true
+                    """
+                }
+            }
+        }
+
+stage('Llamar Azure Function (5 veces en paralelo)') {
+    steps {
+        script {
+            sh '''
+                echo "Iniciando llamadas a Azure Function..."
+                start=$(date +%s)
+
+                for i in $(seq 1 40); do
+                    echo " Llamada $i"
+                    curl -s -X POST "${AZURE_FUNCTION_URL}" \
+                        -H "Content-Type: application/json" \
+                        -d '{ "alumno": "${ALUMNO}", "practica": "${PRACTICA}", "intentos": "${BUILD_NUMBER}" }' > resultado${i}.json &
+                done
+
+                wait
+
+                end=$(date +%s)
+                duration=$((end - start))
+                echo "Tiempo total para las 40 peticiones: ${duration} segundos"
+            '''
+        }
+    }
+}
+
+
+        stage('Mostrar resultados de Azure') {
+            steps {
+                script {
+                    for (int i = 1; i <= 5; i++) {
+                        def raw = readFile("resultado${i}.json").trim()
+                        echo " Resultado #${i}:"
+
+                        try {
+                            def resultado = readJSON text: raw
+                            echo "👤 Alumno detectado: ${resultado.nombre}"
+                            echo "📊 Nota: ${resultado.nota_total}/5"
+
+                            if (resultado.errores != null) {
+                                echo "⚠️ Errores detectados:"
+                                resultado.errores.each { err ->
+                                    echo " - ${err}"
+                                }
+                            } else {
+                                echo "✅ Todos los ejercicios se corrigieron correctamente."
+                            }
+
+                        } catch (Exception e) {
+                            echo "❌ Error al interpretar resultado${i}.json:"
+                            echo raw
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: '*.zip, resultado*.json', onlyIfSuccessful: false
+        }
+    }
+}

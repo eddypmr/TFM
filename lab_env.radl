@@ -1,0 +1,223 @@
+network publica (outbound = 'yes')
+network privada ()
+
+system front (
+cpu.count>=1 and
+memory.size>=2g and
+net_interface.1.connection = 'publica' and
+net_interface.0.connection = 'privada' and
+net_interface.0.ip = '10.10.2.245' and 
+net_interface.0.dns_name = 'jenkinserver' and
+disk.0.os.name='linux' and
+disk.0.os.flavour='ubuntu' and
+disk.0.image.url = 'one://ramses.i3m.upv.es/1593'
+)
+
+configure front (
+@begin
+- tasks:
+  - name: Reinstall CA certificates
+    apt:
+      name: ca-certificates
+      state: latest
+      update_cache: yes
+
+
+  #Install Java
+  - name: Update the system
+    shell: apt update
+
+  # Asegurarnos de que esté instalado ufw
+  - name: Ensure ufw is installed
+    apt:
+      name: ufw
+      state: present
+      update_cache: yes
+
+  # Permitir tráfico SSH (puerto 22)
+  - name: Allow SSH (port 22)
+    ufw:
+      rule: allow
+      port: 22
+      proto: tcp
+
+  # Permitir tráfico HTPPS (puerto 443)
+  - name: Allow HTTPS(port 443)
+    ufw:
+      rule: allow
+      port: 443
+      proto: tcp
+
+  # Permitir tráfico para Jenkins (puerto 8080)
+  - name: Allow Jenkins (port 8080)
+    ufw:
+      rule: allow
+      port: 8080
+      proto: tcp
+
+  # Habilitar ufw
+  - name: Enable ufw
+    ufw:
+      state: enabled
+      logging: on
+
+  - name: Ensure SSH is enabled and started
+    service:
+      name: ssh
+      state: started
+      enabled: true
+
+  - name: Install Openjdk 17. Jenkins need the 17 version or newer
+    shell: apt install openjdk-17-jdk -y
+
+  # Install Jenkins
+  - name: Update the system
+    shell: apt update
+
+  - name: Add Jenkins apt repository key
+    apt_key:
+      url: "https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key"
+      state: present
+
+  - name: Add the Jenkins apt repository
+    apt_repository:
+      repo: "deb https://pkg.jenkins.io/debian-stable binary/"
+      state: present
+      update_cache: true
+
+  - name: Update the system
+    shell: apt update
+    
+  - name: solve error installing Jenkins
+    shell: add-apt-repository universe
+  
+  - name: Install Jenkins
+    shell: apt install jenkins -y --allow-unauthenticated --no-upgrade jenkins
+  
+  - name: Install gcc
+    shell: apt install -y build-essential
+
+  - name: Install bc calculator
+    shell: apt install -y bc
+
+
+  # Install AzCopy
+  - name: Download AzCopy tar.gz archive
+    shell: wget https://aka.ms/downloadazcopy-v10-linux -O /tmp/azcopy.tar.gz
+
+  - name: Extract AzCopy archive
+    shell: tar -xvf /tmp/azcopy.tar.gz -C /tmp
+
+  - name: Copy AzCopy binary to /usr/bin
+    shell: cp /tmp/azcopy_linux_amd64_*/azcopy /usr/bin/azcopy
+
+  - name: Make AzCopy binary executable
+    shell: chmod +x /usr/bin/azcopy
+
+  - name: Clean up temporary files
+    shell: rm -rf /tmp/azcopy.tar.gz /tmp/azcopy_linux_amd64_*
+    
+  - name: Verify AzCopy installation
+    shell: azcopy --version
+
+
+  # Install Autoasssesment scrips from Github
+  - name: Install Autoasssesment scrips from Github
+    git:
+      repo: https://github.com/grycap/ACTaaS
+      dest: /var/tmp/education/ACTaaS
+      version: master
+
+  - name: Set permisions for unittest scripts
+    file:
+      path: /var/tmp/education/ACTaaS/practices/P1/Face/unittests
+      state: directory
+      recurse: yes
+      owner: root
+      group: root
+      mode: '0777'
+
+  - name: Set permisions for unittest directory
+    file:
+      path: /var/tmp/education/ACTaaS/practices/P1/Face/unittests
+      state: directory
+      mode: '0755'  
+@end
+)
+
+
+system windows (
+cpu.arch='x86_64' and
+cpu.count>=2 and
+memory.size>=4g and
+net_interface.0.connection = 'privada' and
+disk.0.os.name='windows' and
+disk.0.image.url = 'one://ramses.i3m.upv.es/1660' and
+disk.0.os.credentials.username = 'winuser' and
+disk.0.os.credentials.password = 'pass' and
+net_interface.0.dns_name = 'entornopractico'
+)
+
+configure windows (
+@begin
+- tasks:
+  - name: Ensure Chocolatey installed from internal repo
+    win_chocolatey:
+      name: chocolatey
+      state: present
+      source: http://internal/odata/repo/ChocolateyInstall.ps1
+
+  - name: Fix problem with Chocolatey .99 (https://github.com/ansible/ansible-modules-extras/issues/378)
+    raw: Chocolatey feature enable -n allowGlobalConfirmation
+
+  - name: install github desktop via Chocolatey
+    win_chocolatey:
+      name: github-desktop
+      state: present
+
+  - name: install Dev-C++ via Chocolatey
+    win_chocolatey:
+      name: orwelldevcpp
+      state: present
+
+  #- name: download dev-c++
+  #  win_get_url:
+  #    url: https://downloads.sourceforge.net/project/orwelldevcpp/Setup%20Releases/Dev-Cpp%205.11%20TDM-GCC%204.9.2%20Setup.exe?r=https%3A%2F%2Fsourceforge.net%2Fprojects%2Forwelldevcpp%2Ffiles%2Flatest%2Fdownload&ts=1551280148
+  #    url: https://sourceforge.net/projects/orwelldevcpp/files/latest/download
+  #    dest: C:\Users\Public\Desktop\Dev-Cpp-5.11-TDM-GCC-4.9.2-Setup.exe
+
+  #- name: install dev-c++
+  #  win_package:
+  #    path: C:\Users\Public\Desktop\Dev-Cpp-5.11-TDM-GCC-4.9.2-Setup.exe
+  #    state: present
+
+  - name: update machine name to 'entornopractico'
+    win_hostname:
+      name: entornopractico
+    register: hostname_state
+
+  - win_reboot:
+    when: hostname_state.reboot_required
+
+  - win_group:
+      name: WORKGROUP
+      state: absent
+
+  #Configure internal UPV domain
+  - win_domain_membership:
+      dns_domain_name: UPVNET.UPV.ES
+      domain_admin_user: eddy
+      domain_admin_password: Pass1234
+      domain_ou_path: "OU=Windows,OU=Servers,DC=UPVNET,DC=UPV,DC=ES"
+      state: domain
+    register: domain_state
+
+  - win_reboot:
+    when: domain_state.reboot_required
+
+@end
+)
+
+deploy front 1
+# You can modify this value to add more windows machines
+#deploy windows 0

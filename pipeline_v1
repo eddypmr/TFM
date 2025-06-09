@@ -1,0 +1,138 @@
+//####Version: 1.0 (ejecución local)####
+
+pipeline {
+    agent any
+
+    environment {
+        DUMMY_REPO  = 'https://github.com/myorg-tfm/practicas-<alumno>.git'
+    }
+
+    stages {
+        stage('Limpiar resultados anteriores') {
+            steps {
+                script {
+                    sh '''
+                        echo "Eliminando archivos resultado*.json antiguos..."
+                        rm -f resultado*.json || true
+                    '''
+                }
+            }
+        }
+        stage('Inicializar variables') {
+            steps {
+                script {
+                    def nombreJob = env.JOB_NAME.tokenize('/')[-1]
+                    env.ALUMNO = nombreJob.replaceFirst('-job\\d+$', '')
+                    def carpetas = env.JOB_NAME.tokenize('/')
+                    env.PRACTICA = carpetas.size() > 1 ? carpetas[-2] : 'practica1'
+
+                    echo "📁 Práctica: ${env.PRACTICA}"
+                    echo "👤 Alumno: ${env.ALUMNO}"
+                }
+            }
+        }
+
+        stage('Clonar repositorio') {
+            steps {
+                git branch: 'main', url: "${DUMMY_REPO}"
+            }
+        }
+
+        stage('Corregir ejercicios localmente') {
+            steps {
+                script {
+                    sh """
+                        python3 -c "
+import os
+import json
+
+# Ruta a los ejercicios
+practica = '${PRACTICA}'
+alumno = '${ALUMNO}'
+
+tests = {
+    'ejercicio1.py': ('sumar', lambda f: f(2,3)==5 and f(-1,1)==0 and f(100,200)==300),
+    'ejercicio2.py': ('es_primo', lambda f: f(2) and f(3) and not f(4) and f(13) and not f(1)),
+    'ejercicio3.py': ('factorial', lambda f: f(0)==1 and f(1)==1 and f(3)==6 and f(5)==120),
+    'ejercicio4.py': ('es_palindromo', lambda f: f('oso') and f('radar') and not f('hola') and f('reconocer') and not f('python')),
+    'ejercicio5.py': ('contar_vocales', lambda f: f('hola')==2 and f('murcielago')==5 and f('xyz')==0 and f('AEIOU')==5)
+}
+
+nota_por_ejercicio = {}
+errores = []
+total = 0
+
+for archivo, (nombre_funcion, test_funcion) in tests.items():
+    ruta = os.path.join(practica, archivo)
+    if not os.path.isfile(ruta):
+        errores.append(f'{archivo}: No entregado')
+        nota_por_ejercicio[archivo] = 0
+        continue
+
+    try:
+        with open(ruta, 'r', encoding='utf-8') as f:
+            codigo = f.read()
+        local_vars = {}
+        exec(codigo, {}, local_vars)
+
+        if nombre_funcion not in local_vars:
+            errores.append(f'{archivo}: función \\'{nombre_funcion}\\' no encontrada')
+            nota_por_ejercicio[archivo] = 0
+            continue
+
+        if test_funcion(local_vars[nombre_funcion]):
+            nota_por_ejercicio[archivo] = 1
+            total += 1
+        else:
+            errores.append(f'{archivo}: test fallido')
+            nota_por_ejercicio[archivo] = 0
+
+    except Exception as e:
+        errores.append(f'{archivo}: Error - {str(e)}')
+        nota_por_ejercicio[archivo] = 0
+
+resultado = {
+    'nombre': alumno,
+    'nota_total': total,
+    'nota_por_ejercicio': nota_por_ejercicio,
+    'errores': errores if errores else None
+}
+
+with open('resultado.json', 'w', encoding='utf-8') as f:
+    json.dump(resultado, f, ensure_ascii=False, indent=2)
+
+print('✅ Corrección finalizada. Resultado guardado en resultado.json')
+"
+                    """
+                }
+            }
+        }
+
+        stage('Mostrar resultado') {
+            steps {
+                script {
+                    def raw = readFile('resultado.json').trim()
+                    def resultado = readJSON text: raw
+
+                    echo "👤 Alumno: ${resultado.nombre}"
+                    echo "📊 Nota final: ${resultado.nota_total}/5"
+                    echo "📈 Detalle por ejercicio:"
+                    resultado.nota_por_ejercicio.each { k, v -> echo " - ${k}: ${v}" }
+
+                    if (resultado.errores) {
+                        echo "⚠️ Errores:"
+                        resultado.errores.each { e -> echo " - ${e}" }
+                    } else {
+                        echo "✅ Todo correcto."
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'resultado.json', onlyIfSuccessful: false
+        }
+    }
+}

@@ -1,0 +1,35 @@
+//##Lanzador de v1 concurrentes##
+
+
+pipeline {
+    agent any
+
+    stages {
+        stage('Lanzar x jobs en paralelo con medición') {
+            steps {
+                script {
+                    def lanzamientos = [:]
+                    def startTime = System.currentTimeMillis()
+                    int iteraciones = 40;
+                    for (int i = 1; i <= iteraciones; i++) {
+                        def alumno = "alumno${i}"
+                        lanzamientos["Job-${alumno}"] = {
+                            echo " Lanzando build para ${alumno}"
+                            build job: 'alu-01/practica1/alu-01-job1-v1',
+                                  parameters: [
+                                      string(name: 'ALUMNO', value: alumno)
+                                  ],
+                                  wait: true  // Esperamos para poder medir duración real
+                        }
+                    }
+
+                    parallel lanzamientos
+
+                    def endTime = System.currentTimeMillis()
+                    def durationSeconds = (endTime - startTime) / 1000
+                    echo "⏱️ Tiempo total de ejecución para los ${iteraciones} builds: ${durationSeconds} segundos"
+                }
+            }
+        }
+    }
+}
